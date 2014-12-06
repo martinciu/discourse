@@ -751,58 +751,8 @@ class Topic < ActiveRecord::Base
     end
   end
 
-  # Valid arguments for the auto close time:
-  #  * An integer, which is the number of hours from now to close the topic.
-  #  * A time, like "12:00", which is the time at which the topic will close in the current day
-  #    or the next day if that time has already passed today.
-  #  * A timestamp, like "2013-11-25 13:00", when the topic should close.
-  #  * A timestamp with timezone in JSON format. (e.g., "2013-11-26T21:00:00.000Z")
-  #  * nil, to prevent the topic from automatically closing.
   def set_auto_close(arg, by_user=nil)
-    self.auto_close_hours = nil
-
-    if self.auto_close_based_on_last_post
-      num_hours = arg.to_f
-      if num_hours > 0
-        last_post_created_at = self.ordered_posts.last.try(:created_at) || Time.zone.now
-        self.auto_close_at = last_post_created_at + num_hours.hours
-        self.auto_close_hours = num_hours
-      else
-        self.auto_close_at = nil
-      end
-    else
-      if arg.is_a?(String) && m = /^(\d{1,2}):(\d{2})(?:\s*[AP]M)?$/i.match(arg.strip)
-        now = Time.zone.now
-        self.auto_close_at = Time.zone.local(now.year, now.month, now.day, m[1].to_i, m[2].to_i)
-        self.auto_close_at += 1.day if self.auto_close_at < now
-      elsif arg.is_a?(String) && arg.include?("-") && timestamp = Time.zone.parse(arg)
-        self.auto_close_at = timestamp
-        self.errors.add(:auto_close_at, :invalid) if timestamp < Time.zone.now
-      else
-        num_hours = arg.to_f
-        if num_hours > 0
-          self.auto_close_at = num_hours.hours.from_now
-          self.auto_close_hours = num_hours
-        else
-          self.auto_close_at = nil
-        end
-      end
-    end
-
-    if self.auto_close_at.nil?
-      self.auto_close_started_at = nil
-    else
-      if self.auto_close_based_on_last_post
-        self.auto_close_started_at = Time.zone.now
-      else
-        self.auto_close_started_at ||= Time.zone.now
-      end
-      if by_user.try(:staff?) || by_user.try(:trust_level) == TrustLevel[4]
-        self.auto_close_user = by_user
-      else
-        self.auto_close_user ||= (self.user.staff? || self.user.trust_level == TrustLevel[4] ? self.user : Discourse.system_user)
-      end
-    end
+    AutoCloser.new(self).by_time(arg).by_user(by_user)
 
     self
   end
@@ -831,6 +781,10 @@ class Topic < ActiveRecord::Base
 
   def expandable_first_post?
     SiteSetting.embeddable_host.present? && SiteSetting.embed_truncate? && has_topic_embed?
+  end
+
+  def last_post_created_at
+    ordered_posts.last.try(:created_at) || Time.zone.now
   end
 
   private
