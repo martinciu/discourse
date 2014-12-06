@@ -11,7 +11,7 @@ class AutoCloser
       def_delegator :at, :<=>
 
       def past?
-        at < Time.zone.now
+        at && at < Time.zone.now
       end
 
     end
@@ -29,22 +29,48 @@ class AutoCloser
     end
 
     def call
-      time = TimeParsed.new
-      if arg.is_a?(String) && m = /^(\d{1,2}):(\d{2})(?:\s*[AP]M)?$/i.match(arg.strip)
+      parse_string or parse_number
+      handle_errors
+
+      time
+    end
+
+    private
+
+    def handle_errors
+      @on_error.call if time.past?
+    end
+
+    def parse_number
+      if (num_hours = arg.to_f) > 0
+        time.at = num_hours.hours.from_now
+        time.hours = num_hours
+      end
+    end
+
+    def parse_string
+      if arg.is_a?(String)
+        parse_time or parse_datetime
+      end
+    end
+
+    def parse_datetime
+      if arg.include?("-")
+        time.at = Time.zone.parse(arg)
+      end
+    end
+
+    def parse_time
+      if m = /^(\d{1,2}):(\d{2})(?:\s*[AP]M)?$/i.match(arg.strip)
         now = Time.zone.now
         time.at = Time.zone.local(now.year, now.month, now.day, m[1].to_i, m[2].to_i)
         time.at += 1.day if time.past?
-      elsif arg.is_a?(String) && arg.include?("-") && time.at = Time.zone.parse(arg)
-        @on_error.call if time.past?
-      else
-        num_hours = arg.to_f
-        if num_hours > 0
-          time.at = num_hours.hours.from_now
-          time.hours = num_hours
-        end
+        time.at
       end
+    end
 
-      time
+    def time
+      @time ||= TimeParsed.new
     end
   end
 
